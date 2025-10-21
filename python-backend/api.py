@@ -414,3 +414,20 @@ async def get_cognitive_insights():
         'agent_performance': agent_performance,
         'context_patterns': dict(list(cognitive_adapter.context_agent_mapping.items())[:5])
     }
+
+@app.post("/mock-chat", response_model=ChatResponse) 
+async def mock_chat_endpoint(req: ChatRequest):
+    """
+    Mock chat endpoint that demonstrates OpenCog cognitive adaptation
+    without requiring OpenAI API access.
+    """
+    from mock_agents import mock_system
+    import uuid
+    
+    # Use existing conversation ID or create new one
+    conversation_id = req.conversation_id or uuid.uuid4().hex
+    
+    # Process message with mock system
+    result = await mock_system.process_message(req.message, conversation_id)
+    
+    return ChatResponse(**result)
