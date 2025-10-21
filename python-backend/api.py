@@ -13,6 +13,9 @@ from main import (
     flight_status_agent,
     cancellation_agent,
     create_initial_context,
+    update_cognitive_context,
+    get_cognitive_agent_suggestion,
+    calculate_interaction_satisfaction,
 )
 
 from agents import (
@@ -77,6 +80,8 @@ class ChatResponse(BaseModel):
     context: Dict[str, Any]
     agents: List[Dict[str, Any]]
     guardrails: List[GuardrailCheck] = []
+    cognitive_state: Optional[Dict[str, Any]] = None
+    cognitive_suggestions: Optional[Dict[str, float]] = None
 
 # =========================
 # In-memory store for conversation state
@@ -178,12 +183,19 @@ async def chat_endpoint(req: ChatRequest):
                 context=ctx.model_dump(),
                 agents=_build_agents_list(),
                 guardrails=[],
+                cognitive_state=ctx.cognitive_state,
+                cognitive_suggestions={}
             )
     else:
         conversation_id = req.conversation_id  # type: ignore
         state = conversation_store.get(conversation_id)
 
     current_agent = _get_agent_by_name(state["current_agent"])
+    
+    # Get cognitive suggestions for agent selection
+    cognitive_suggestions = get_cognitive_agent_suggestion(state["context"], req.message)
+    logger.info(f"Cognitive suggestions: {cognitive_suggestions}")
+    
     state["input_items"].append({"content": req.message, "role": "user"})
     old_context = state["context"].model_dump().copy()
     guardrail_checks: List[GuardrailCheck] = []
@@ -219,12 +231,21 @@ async def chat_endpoint(req: ChatRequest):
 
     messages: List[MessageResponse] = []
     events: List[AgentEvent] = []
+    
+    # Track first agent response for cognitive learning
+    first_agent_response = None
+    first_responding_agent = None
 
     for item in result.new_items:
         if isinstance(item, MessageOutputItem):
             text = ItemHelpers.text_message_output(item)
             messages.append(MessageResponse(content=text, agent=item.agent.name))
             events.append(AgentEvent(id=uuid4().hex, type="message", agent=item.agent.name, content=text))
+            
+            # Track first response for cognitive learning
+            if first_agent_response is None:
+                first_agent_response = text
+                first_responding_agent = item.agent.name
         # Handle handoff output and agent switching
         elif isinstance(item, HandoffOutputItem):
             # Record the handoff event
@@ -315,6 +336,17 @@ async def chat_endpoint(req: ChatRequest):
             )
         )
 
+    # Update cognitive learning based on the interaction
+    if first_agent_response and first_responding_agent:
+        satisfaction_score = calculate_interaction_satisfaction(
+            first_responding_agent, req.message, first_agent_response, state["context"]
+        )
+        update_cognitive_context(
+            state["context"], first_responding_agent, req.message, 
+            first_agent_response, satisfaction_score
+        )
+        logger.info(f"Updated cognitive learning: {first_responding_agent} satisfaction: {satisfaction_score}")
+
     state["input_items"] = result.to_input_list()
     state["current_agent"] = current_agent.name
     conversation_store.save(conversation_id, state)
@@ -344,4 +376,41 @@ async def chat_endpoint(req: ChatRequest):
         context=state["context"].dict(),
         agents=_build_agents_list(),
         guardrails=final_guardrails,
+        cognitive_state=state["context"].cognitive_state,
+        cognitive_suggestions=cognitive_suggestions
     )
+
+@app.get("/cognitive-insights")
+async def get_cognitive_insights():
+    """Get detailed cognitive insights from the OpenCog-inspired system."""
+    from opencog_cognitive import cognitive_adapter
+    
+    cognitive_state = cognitive_adapter.get_cognitive_state()
+    
+    # Get attention distribution  
+    attention_dist = cognitive_adapter.atomspace.attention_bank.get_attention_distribution()
+    
+    # Get memory statistics
+    memory_stats = {
+        'episodic_memory_size': len(cognitive_adapter.memory.episodic_memory),
+        'semantic_patterns_count': len(cognitive_adapter.memory.semantic_patterns),
+        'recent_interactions': len(cognitive_adapter.memory.interaction_history)
+    }
+    
+    # Get top performing agents
+    agent_performance = {}
+    for agent_name, performances in cognitive_adapter.agent_performance.items():
+        if performances:
+            agent_performance[agent_name] = {
+                'average_satisfaction': sum(performances) / len(performances),
+                'total_interactions': len(performances),
+                'recent_trend': sum(performances[-3:]) / len(performances[-3:]) if len(performances) >= 3 else 0
+            }
+    
+    return {
+        'cognitive_state': cognitive_state,
+        'attention_distribution': attention_dist,
+        'memory_statistics': memory_stats,
+        'agent_performance': agent_performance,
+        'context_patterns': dict(list(cognitive_adapter.context_agent_mapping.items())[:5])
+    }

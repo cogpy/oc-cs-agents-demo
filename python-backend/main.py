@@ -15,6 +15,7 @@ from agents import (
     input_guardrail,
 )
 from agents.extensions.handoff_prompt import RECOMMENDED_PROMPT_PREFIX
+from opencog_cognitive import cognitive_adapter, TruthValue, AttentionValue
 
 # =========================
 # CONTEXT
@@ -27,6 +28,12 @@ class AirlineAgentContext(BaseModel):
     seat_number: str | None = None
     flight_number: str | None = None
     account_number: str | None = None  # Account number associated with the customer
+    
+    # OpenCog cognitive fields
+    cognitive_state: dict | None = None
+    interaction_count: int = 0
+    satisfaction_history: list[float] = []
+    learned_preferences: dict[str, float] = {}
 
 def create_initial_context() -> AirlineAgentContext:
     """
@@ -36,6 +43,9 @@ def create_initial_context() -> AirlineAgentContext:
     """
     ctx = AirlineAgentContext()
     ctx.account_number = str(random.randint(10000000, 99999999))
+    ctx.cognitive_state = cognitive_adapter.get_cognitive_state()
+    ctx.satisfaction_history = []
+    ctx.learned_preferences = {}
     return ctx
 
 # =========================
@@ -114,6 +124,9 @@ async def on_seat_booking_handoff(context: RunContextWrapper[AirlineAgentContext
     """Set a random flight number when handed off to the seat booking agent."""
     context.context.flight_number = f"FLT-{random.randint(100, 999)}"
     context.context.confirmation_number = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    
+    # Cognitive learning: allocate attention to seat booking
+    cognitive_adapter.atomspace.attention_bank.allocate_attention("seat_booking_agent", 50.0)
 
 # =========================
 # GUARDRAILS
@@ -253,6 +266,9 @@ async def on_cancellation_handoff(
         )
     if context.context.flight_number is None:
         context.context.flight_number = f"FLT-{random.randint(100, 999)}"
+    
+    # Cognitive learning: allocate attention to cancellation agent
+    cognitive_adapter.atomspace.attention_bank.allocate_attention("cancellation_agent", 60.0)
 
 def cancellation_instructions(
     run_context: RunContextWrapper[AirlineAgentContext], agent: Agent[AirlineAgentContext]
@@ -315,3 +331,70 @@ seat_booking_agent.handoffs.append(triage_agent)
 flight_status_agent.handoffs.append(triage_agent)
 # Add cancellation agent handoff back to triage
 cancellation_agent.handoffs.append(triage_agent)
+
+# =========================
+# COGNITIVE ENHANCEMENTS
+# =========================
+
+def update_cognitive_context(context: AirlineAgentContext, agent_name: str, user_message: str, 
+                           agent_response: str, satisfaction_score: float = 0.5):
+    """Update cognitive state based on interaction."""
+    context.interaction_count += 1
+    context.satisfaction_history.append(satisfaction_score)
+    
+    # Keep only last 10 satisfaction scores
+    if len(context.satisfaction_history) > 10:
+        context.satisfaction_history = context.satisfaction_history[-10:]
+    
+    # Learn from this interaction
+    cognitive_adapter.learn_from_interaction(
+        agent_name=agent_name,
+        context=context.model_dump(),
+        user_message=user_message,
+        agent_response=agent_response,
+        satisfaction=satisfaction_score
+    )
+    
+    # Update cognitive state in context
+    context.cognitive_state = cognitive_adapter.get_cognitive_state()
+
+def get_cognitive_agent_suggestion(context: AirlineAgentContext, user_message: str) -> dict[str, float]:
+    """Get cognitive suggestions for best agent to handle the request."""
+    return cognitive_adapter.suggest_best_agent(context.model_dump(), user_message)
+
+def calculate_interaction_satisfaction(agent_name: str, user_message: str, 
+                                     agent_response: str, context: AirlineAgentContext) -> float:
+    """Calculate satisfaction score for an interaction based on various factors."""
+    score = 0.5  # Base score
+    
+    # Bonus for providing useful information
+    if any(word in agent_response.lower() for word in ['updated', 'successfully', 'confirmed', 'found']):
+        score += 0.2
+    
+    # Bonus for contextual responses
+    if context.confirmation_number and context.confirmation_number in agent_response:
+        score += 0.1
+    if context.flight_number and context.flight_number in agent_response:
+        score += 0.1
+    
+    # Penalty for handoffs to other agents without resolution
+    if 'transfer' in agent_response.lower() or 'triage' in agent_response.lower():
+        score -= 0.1
+    
+    # Bonus for direct problem solving
+    intent_keywords = {
+        'seat': ['seat', 'change', 'update'],
+        'cancel': ['cancel', 'cancellation'],
+        'status': ['status', 'flight', 'gate', 'time'],
+        'faq': ['baggage', 'wifi', 'seats on']
+    }
+    
+    message_lower = user_message.lower()
+    response_lower = agent_response.lower()
+    
+    for intent, keywords in intent_keywords.items():
+        if any(kw in message_lower for kw in keywords) and any(kw in response_lower for kw in keywords):
+            score += 0.15
+    
+    # Ensure score is within bounds
+    return max(0.0, min(1.0, score))
