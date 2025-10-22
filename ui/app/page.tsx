@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { AgentPanel } from "@/components/agent-panel";
-import { Chat } from "@/components/chat";
+import { Chat } from "@/components/Chat";
+import { CognitivePanel } from "@/components/cognitive-panel";
 import type { Agent, AgentEvent, GuardrailCheck, Message } from "@/lib/types";
 import { callChatAPI } from "@/lib/api";
 
@@ -16,6 +17,9 @@ export default function Home() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   // Loading state while awaiting assistant response
   const [isLoading, setIsLoading] = useState(false);
+  // OpenCog cognitive state
+  const [cognitiveState, setCognitiveState] = useState<any>(null);
+  const [cognitiveSuggestions, setCognitiveSuggestions] = useState<Record<string, number>>({});
 
   // Boot the conversation
   useEffect(() => {
@@ -31,6 +35,8 @@ export default function Home() {
       setEvents(initialEvents);
       setAgents(data.agents || []);
       setGuardrails(data.guardrails || []);
+      setCognitiveState(data.cognitive_state);
+      setCognitiveSuggestions(data.cognitive_suggestions || {});
       if (Array.isArray(data.messages)) {
         setMessages(
           data.messages.map((m: any) => ({
@@ -72,6 +78,9 @@ export default function Home() {
     if (data.agents) setAgents(data.agents);
     // Update guardrails state
     if (data.guardrails) setGuardrails(data.guardrails);
+    // Update cognitive state
+    setCognitiveState(data.cognitive_state);
+    setCognitiveSuggestions(data.cognitive_suggestions || {});
 
     if (data.messages) {
       const responses: Message[] = data.messages.map((m: any) => ({
@@ -100,6 +109,10 @@ export default function Home() {
         messages={messages}
         onSendMessage={handleSendMessage}
         isLoading={isLoading}
+      />
+      <CognitivePanel
+        cognitiveState={cognitiveState}
+        cognitiveSuggestions={cognitiveSuggestions}
       />
     </main>
   );

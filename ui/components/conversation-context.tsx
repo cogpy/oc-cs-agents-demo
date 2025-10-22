@@ -15,6 +15,11 @@ interface ConversationContextProps {
 }
 
 export function ConversationContext({ context }: ConversationContextProps) {
+  // Filter out complex objects and arrays, only show primitive values
+  const simpleFields = Object.entries(context).filter(([key, value]) => {
+    return typeof value === 'string' || typeof value === 'number' || value === null || value === undefined;
+  });
+
   return (
     <PanelSection
       title="Conversation Context"
@@ -23,7 +28,7 @@ export function ConversationContext({ context }: ConversationContextProps) {
       <Card className="bg-gradient-to-r from-white to-gray-50 border-gray-200 shadow-sm">
         <CardContent className="p-3">
           <div className="grid grid-cols-2 gap-2">
-            {Object.entries(context).map(([key, value]) => (
+            {simpleFields.map(([key, value]) => (
               <div
                 key={key}
                 className="flex items-center gap-2 bg-white p-2 rounded-md border border-gray-200 shadow-sm transition-all"

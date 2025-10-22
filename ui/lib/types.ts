@@ -44,3 +44,49 @@ export interface GuardrailCheck {
   timestamp: Date
 }
 
+export interface ChatResponse {
+  conversation_id: string;
+  current_agent: string;
+  messages: { content: string; agent: string }[];
+  events: AgentEvent[];
+  context: Record<string, any>;
+  agents: Agent[];
+  guardrails?: GuardrailCheck[];
+  cognitive_state?: CognitiveState;
+  cognitive_suggestions?: Record<string, number>;
+}
+
+export interface CognitiveState {
+  total_atoms: number;
+  high_attention_atoms: AttentionAtom[];
+  attention_distribution: Record<string, number>;
+  agent_performance: Record<string, number>;
+  memory_episodes: number;
+  interaction_patterns: Record<string, number>;
+}
+
+export interface AttentionAtom {
+  name: string;
+  type: string;
+  sti: number;
+  lti: number;
+  truth_strength: number;
+  truth_confidence: number;
+}
+
+export interface CognitiveInsights {
+  cognitive_state: CognitiveState;
+  attention_distribution: Record<string, number>;
+  memory_statistics: {
+    episodic_memory_size: number;
+    semantic_patterns_count: number;
+    recent_interactions: number;
+  };
+  agent_performance: Record<string, {
+    average_satisfaction: number;
+    total_interactions: number;
+    recent_trend: number;
+  }>;
+  context_patterns: Record<string, Record<string, number>>;
+}
+
